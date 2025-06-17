@@ -29,6 +29,8 @@ import {
   AlertCircle,
   Palette,
   Focus,
+  Users,
+  Activity,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -59,6 +61,13 @@ interface PhotoState {
   saturation: number
   sharpness: number
   autoCenter: boolean
+}
+
+interface Stats {
+  totalUsers: number
+  photosGenerated: number
+  backgroundsRemoved: number
+  lastUpdated: string
 }
 
 // A4 dimensions in pixels at 300 DPI (21cm x 29.7cm)
@@ -126,6 +135,12 @@ export default function PhotoLayoutGenerator() {
   const [backgroundRemovalProgress, setBackgroundRemovalProgress] = useState(0)
   const [processingStatus, setProcessingStatus] = useState<string>("")
   const [apiError, setApiError] = useState<string>("")
+  const [stats, setStats] = useState<Stats>({
+    totalUsers: 50, // Start from 50
+    photosGenerated: 127,
+    backgroundsRemoved: 89,
+    lastUpdated: new Date().toISOString(),
+  })
 
   const fileInputRef = useRef<HTMLInputElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -135,6 +150,40 @@ export default function PhotoLayoutGenerator() {
 
   useEffect(() => {
     setMounted(true)
+    // Load initial stats
+    fetchStats()
+  }, [])
+
+  // Fetch stats from API
+  const fetchStats = useCallback(async () => {
+    try {
+      const response = await fetch("/api/stats")
+      if (response.ok) {
+        const data = await response.json()
+        setStats(data)
+      }
+    } catch (error) {
+      console.error("Failed to fetch stats:", error)
+    }
+  }, [])
+
+  // Update stats
+  const updateStats = useCallback(async (action: string) => {
+    try {
+      const response = await fetch("/api/stats", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ action }),
+      })
+      if (response.ok) {
+        const data = await response.json()
+        setStats(data)
+      }
+    } catch (error) {
+      console.error("Failed to update stats:", error)
+    }
   }, [])
 
   const saveToHistory = useCallback(
@@ -170,6 +219,9 @@ export default function PhotoLayoutGenerator() {
 
     if (!response.ok) {
       const errorData = await response.json()
+      if (errorData.fallback) {
+        throw new Error("FALLBACK_REQUIRED")
+      }
       throw new Error(errorData.error || `API Error: ${response.status}`)
     }
 
@@ -294,19 +346,39 @@ export default function PhotoLayoutGenerator() {
       const file = new File([blob], "image.jpg", { type: "image/jpeg" })
 
       setBackgroundRemovalProgress(40)
-      setProcessingStatus("Removing background with AI...")
+      setProcessingStatus("Trying Remove.bg API...")
 
       let processedImageUrl: string
+      let usedAPI = false
 
       try {
         // Try server API first
-        processedImageUrl = await removeBackgroundAPI(file)
-        setProcessingStatus("AI processing complete!")
+        const formData = new FormData()
+        formData.append("image", file)
+
+        const response = await fetch("/api/remove-background", {
+          method: "POST",
+          body: formData,
+        })
+
+        if (response.ok) {
+          const blob = await response.blob()
+          processedImageUrl = URL.createObjectURL(blob)
+          usedAPI = true
+          setProcessingStatus("Remove.bg API success!")
+        } else {
+          throw new Error("API failed")
+        }
       } catch (apiError) {
-        console.warn("Server API failed, using fallback:", apiError)
-        setApiError("Server API unavailable, using built-in removal")
+        console.warn("Remove.bg API failed, using built-in removal")
+        setApiError("API unavailable, using built-in AI removal")
         setProcessingStatus("Using built-in background removal...")
+
+        setBackgroundRemovalProgress(60)
+
+        // Use client-side removal as fallback
         processedImageUrl = await removeBackgroundClient(photoState.image)
+        usedAPI = false
       }
 
       setBackgroundRemovalProgress(80)
@@ -320,15 +392,35 @@ export default function PhotoLayoutGenerator() {
           backgroundRemoved: true,
         })
         setBackgroundRemovalProgress(100)
-        setProcessingStatus("Background removed successfully!")
+
+        if (usedAPI) {
+          setProcessingStatus("Background removed with Remove.bg API!")
+        } else {
+          setProcessingStatus("Background removed with built-in AI!")
+        }
+
         setIsProcessing(false)
+
+        // Update stats
+        updateStats("background_removed")
 
         setTimeout(() => {
           setBackgroundRemovalProgress(0)
           setProcessingStatus("")
-          setApiError("")
-        }, 2000)
+          if (usedAPI) {
+            setApiError("")
+          }
+        }, 3000)
       }
+
+      processedImage.onerror = () => {
+        console.error("Failed to load processed image")
+        setApiError("Failed to process image. Please try again.")
+        setIsProcessing(false)
+        setBackgroundRemovalProgress(0)
+        setProcessingStatus("")
+      }
+
       processedImage.src = processedImageUrl
     } catch (error) {
       console.error("Background removal failed:", error)
@@ -337,7 +429,7 @@ export default function PhotoLayoutGenerator() {
       setBackgroundRemovalProgress(0)
       setProcessingStatus("")
     }
-  }, [photoState.image, removeBackgroundAPI, removeBackgroundClient, updatePhotoState])
+  }, [photoState.image, removeBackgroundClient, updatePhotoState, updateStats])
 
   // Enhanced image processing with professional filters
   const applyImageFilters = useCallback((ctx: CanvasRenderingContext2D, state: PhotoState) => {
@@ -434,12 +526,15 @@ export default function PhotoLayoutGenerator() {
             sharpness: 100,
           })
           setIsProcessing(false)
+
+          // Update stats for photo upload
+          updateStats("photo_uploaded")
         }
         img.src = e.target?.result as string
       }
       reader.readAsDataURL(file)
     },
-    [updatePhotoState, autoCenterImage, photoState],
+    [updatePhotoState, autoCenterImage, photoState, updateStats],
   )
 
   const drawPhoto = useCallback(
@@ -598,7 +693,10 @@ export default function PhotoLayoutGenerator() {
     link.download = filename
     link.href = gridCanvasRef.current.toDataURL("image/jpeg", 0.95)
     link.click()
-  }, [selectedRows])
+
+    // Update stats
+    updateStats("photo_exported")
+  }, [selectedRows, updateStats])
 
   const exportAsPDF = useCallback(() => {
     if (!gridCanvasRef.current) return
@@ -618,7 +716,10 @@ export default function PhotoLayoutGenerator() {
 
     pdf.addImage(imgData, "JPEG", 0, 0, 21, 29.7)
     pdf.save(filename)
-  }, [selectedRows])
+
+    // Update stats
+    updateStats("photo_exported")
+  }, [selectedRows, updateStats])
 
   const undo = useCallback(() => {
     if (historyIndex > 0) {
@@ -697,6 +798,19 @@ export default function PhotoLayoutGenerator() {
               </div>
             </div>
             <div className="flex items-center gap-3">
+              {/* Live Stats */}
+              <div className="hidden md:flex items-center gap-4 px-4 py-2 rounded-full bg-gradient-to-r from-gray-800/50 to-gray-700/50 border border-gray-600/30 backdrop-blur-sm">
+                <div className="flex items-center gap-1 text-green-400">
+                  <Users className="w-4 h-4" />
+                  <span className="text-sm font-medium">{stats.totalUsers.toLocaleString()}</span>
+                </div>
+                <div className="w-px h-4 bg-gray-600"></div>
+                <div className="flex items-center gap-1 text-blue-400">
+                  <Activity className="w-4 h-4" />
+                  <span className="text-sm font-medium">{stats.photosGenerated.toLocaleString()}</span>
+                </div>
+              </div>
+
               <Badge variant="secondary" className="bg-green-500/20 text-green-400 border-green-500/30 hidden sm:flex">
                 <Sparkles className="w-3 h-3 mr-1" />
                 AI Ready
@@ -1450,6 +1564,33 @@ export default function PhotoLayoutGenerator() {
               </svg>
               <span className="text-sm font-medium">Connect on LinkedIn</span>
             </a>
+          </div>
+
+          {/* Enhanced Footer Stats */}
+          <div className="bg-gradient-to-r from-gray-800/30 to-gray-700/30 rounded-xl p-6 border border-gray-600/20">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <div className="text-center">
+                <div className="flex items-center justify-center gap-2 text-green-400 mb-2">
+                  <Users className="w-5 h-5" />
+                  <span className="text-2xl font-bold">{stats.totalUsers.toLocaleString()}</span>
+                </div>
+                <p className="text-sm text-gray-400">Happy Customers</p>
+              </div>
+              <div className="text-center">
+                <div className="flex items-center justify-center gap-2 text-blue-400 mb-2">
+                  <Activity className="w-5 h-5" />
+                  <span className="text-2xl font-bold">{stats.photosGenerated.toLocaleString()}</span>
+                </div>
+                <p className="text-sm text-gray-400">Photos Generated</p>
+              </div>
+              <div className="text-center">
+                <div className="flex items-center justify-center gap-2 text-purple-400 mb-2">
+                  <Scissors className="w-5 h-5" />
+                  <span className="text-2xl font-bold">{stats.backgroundsRemoved.toLocaleString()}</span>
+                </div>
+                <p className="text-sm text-gray-400">Backgrounds Removed</p>
+              </div>
+            </div>
           </div>
 
           <div className="text-xs text-gray-500 flex items-center justify-center gap-2">
