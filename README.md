@@ -1,6 +1,16 @@
 # Photo Studio Pro - Professional Passport Photo Generator
 
 A premium, studio-quality passport photo generator with AI background removal, professional borders, and responsive design. Perfect for mobile phone print shops and photo studios.
+#
+![image](https://github.com/user-attachments/assets/49890cd0-8455-4e76-af31-fde86a3fb0c1)
+#
+![screencapture-photo-studio-pro-vercel-app-2025-06-17-13_27_35](https://github.com/user-attachments/assets/f4d8a94f-94ec-4509-ad93-fc21e745efc5)
+#
+![screencapture-photo-studio-pro-vercel-app-2025-06-17-13_29_48](https://github.com/user-attachments/assets/87bcf5d6-af6f-48b5-b52c-d33de37cb4a5)
+#
+![PassportPhotos_6Rows_30Photos_2025-06-17T08-00-23](https://github.com/user-attachments/assets/db0ad3fc-6693-475d-b54a-f5dd7292a68b)
+#
+
 
 ## ✨ **New Premium Features**
 
